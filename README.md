@@ -68,7 +68,7 @@ flowchart LR
 Requires [Docker](https://www.docker.com/products/docker-desktop/). [Ollama](https://ollama.com/) is optional (`ollama pull qwen3:8b`).
 
 ```bash
-git clone https://github.com/<your-username>/energy-management-system.git
+git clone https://github.com/fdaniel18/energy-management-system.git
 cd energy-management-system
 cp .env.example .env        # optional: every variable has a development default
 docker compose up --build -d
