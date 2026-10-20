@@ -1,0 +1,12 @@
+entryPoints:
+  web:
+    address: ":80"
+
+api:
+  dashboard: true
+
+providers:
+  docker:
+    network: microservices-net
+    exposedByDefault: false
+

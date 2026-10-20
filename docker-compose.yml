@@ -1,0 +1,260 @@
+services:
+  # --- Traefik Reverse Proxy ---
+  traefik:
+    image: traefik:v3.1
+    container_name: traefik
+    restart: unless-stopped
+    command:
+      - "--api.dashboard=true"
+      - "--api.insecure=true"
+      - "--entryPoints.web.address=:80"
+      - "--providers.docker=true"
+      - "--log.level=INFO"
+    ports:
+      - "80:80"
+      - "8080:8080"
+    volumes:
+      - "/var/run/docker.sock:/var/run/docker.sock:ro"
+      - "./traefik/traefik.yml:/etc/traefik/traefik.yml:ro"
+    networks:
+      - microservices-net
+
+  # --- RabbitMQ Message Broker ---
+  rabbitmq:
+    image: rabbitmq:3-management
+    container_name: rabbitmq
+    environment:
+      RABBITMQ_DEFAULT_USER: ${RABBITMQ_USER:-guest}
+      RABBITMQ_DEFAULT_PASS: ${RABBITMQ_PASSWORD:-guest}
+    ports:
+      - "5672:5672"   # AMQP port
+      - "15672:15672" # Management UI
+    networks:
+      - microservices-net
+
+  # --- PostgreSQL User ---
+  postgres-user:
+    image: postgres:15
+    container_name: postgres-user
+    environment:
+      POSTGRES_DB: User
+      POSTGRES_USER: ${POSTGRES_USER:-postgres}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-postgres}
+    ports:
+      - "5433:5432"
+    networks:
+      - microservices-net
+
+  # --- PostgreSQL Device ---
+  postgres-device:
+    image: postgres:15
+    container_name: postgres-device
+    environment:
+      POSTGRES_DB: Device
+      POSTGRES_USER: ${POSTGRES_USER:-postgres}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-postgres}
+    ports:
+      - "5434:5432"
+    networks:
+      - microservices-net
+
+  # --- PostgreSQL Auth ---
+  postgres-auth:
+    image: postgres:15
+    container_name: postgres-auth
+    environment:
+      POSTGRES_DB: Credentials
+      POSTGRES_USER: ${POSTGRES_USER:-postgres}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-postgres}
+    ports:
+      - "5435:5432"
+    networks:
+      - microservices-net
+
+  # --- PostgreSQL Monitoring ---
+  postgres-monitoring:
+    image: postgres:15
+    container_name: postgres-monitoring
+    environment:
+      POSTGRES_DB: monitoring_db
+      POSTGRES_USER: ${POSTGRES_USER:-postgres}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-postgres}
+    ports:
+      - "5436:5432"
+    networks:
+      - microservices-net
+
+  # --- User Service ---
+  user-service:
+    build: ./UserMicroservice
+    container_name: user-service
+    depends_on:
+      - postgres-user
+      - rabbitmq
+    environment:
+      SPRING_DATASOURCE_URL: jdbc:postgresql://postgres-user:5432/User
+      SPRING_DATASOURCE_USERNAME: ${POSTGRES_USER:-postgres}
+      SPRING_DATASOURCE_PASSWORD: ${POSTGRES_PASSWORD:-postgres}
+      SERVER_PORT: 8080
+      SPRING_RABBITMQ_HOST: rabbitmq
+      SPRING_RABBITMQ_PORT: 5672
+      SPRING_RABBITMQ_USERNAME: ${RABBITMQ_USER:-guest}
+      SPRING_RABBITMQ_PASSWORD: ${RABBITMQ_PASSWORD:-guest}
+    labels:
+      - "traefik.enable=true"
+      # Public endpoint for user creation (no auth middleware)
+      - "traefik.http.routers.user-public.rule=PathPrefix(`/users/public`)"
+      - "traefik.http.routers.user-public.entrypoints=web"
+      - "traefik.http.routers.user-public.priority=100"
+      - "traefik.http.services.user.loadbalancer.server.port=8080"
+      # Secured endpoints for other /users paths
+      - "traefik.http.routers.user.rule=PathPrefix(`/users`)"
+      - "traefik.http.routers.user.entrypoints=web"
+      - "traefik.http.routers.user.priority=10"
+      - "traefik.http.routers.user.middlewares=auth@docker"
+    networks:
+      - microservices-net
+
+  # --- Device Service ---
+  device-service:
+    build: ./DevicesMicroservice
+    container_name: device-service
+    depends_on:
+      - postgres-device
+      - rabbitmq
+    environment:
+      SPRING_DATASOURCE_URL: jdbc:postgresql://postgres-device:5432/Device
+      SPRING_DATASOURCE_USERNAME: ${POSTGRES_USER:-postgres}
+      SPRING_DATASOURCE_PASSWORD: ${POSTGRES_PASSWORD:-postgres}
+      SERVER_PORT: 8080
+      SPRING_RABBITMQ_HOST: rabbitmq
+      SPRING_RABBITMQ_PORT: 5672
+      SPRING_RABBITMQ_USERNAME: ${RABBITMQ_USER:-guest}
+      SPRING_RABBITMQ_PASSWORD: ${RABBITMQ_PASSWORD:-guest}
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.device.rule=PathPrefix(`/devices`)"
+      - "traefik.http.services.device.loadbalancer.server.port=8080"
+      - "traefik.http.routers.device.entrypoints=web"
+      - "traefik.http.routers.device.priority=10"
+      - "traefik.http.routers.device.middlewares=auth@docker"
+    networks:
+      - microservices-net
+
+  # --- Auth Service ---
+  auth-service:
+    build: ./AuthService
+    container_name: auth-service
+    depends_on:
+      - postgres-auth
+      - user-service
+      - rabbitmq
+    environment:
+      SPRING_DATASOURCE_URL: jdbc:postgresql://postgres-auth:5432/Credentials
+      SPRING_DATASOURCE_USERNAME: ${POSTGRES_USER:-postgres}
+      SPRING_DATASOURCE_PASSWORD: ${POSTGRES_PASSWORD:-postgres}
+      SERVER_PORT: 8080
+      USERSERVICE_BASE_URL: http://user-service:8080
+      JWT_SECRET: ${JWT_SECRET:-change-me-dev-only-jwt-secret-key-min-32-bytes}
+      SPRING_RABBITMQ_HOST: rabbitmq
+      SPRING_RABBITMQ_PORT: 5672
+      SPRING_RABBITMQ_USERNAME: ${RABBITMQ_USER:-guest}
+      SPRING_RABBITMQ_PASSWORD: ${RABBITMQ_PASSWORD:-guest}
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.auth.rule=PathPrefix(`/auth`)"
+      - "traefik.http.services.auth.loadbalancer.server.port=8080"
+      - "traefik.http.routers.auth.entrypoints=web"
+      - "traefik.http.routers.auth.priority=10"
+      - "traefik.http.middlewares.auth.forwardauth.address=http://auth-service:8080/auth/validate"
+      - "traefik.http.middlewares.auth.forwardauth.authResponseHeaders=X-User-Email,X-User-Role,X-User-Id"
+      - "traefik.http.middlewares.auth.forwardauth.authRequestHeaders=Authorization"
+    networks:
+      - microservices-net
+
+  # --- Data Simulator ---
+  data-simulator:
+    build: ./DataSimulator
+    container_name: data-simulator
+    depends_on:
+      - rabbitmq
+      - device-service
+    environment:
+      SPRING_RABBITMQ_HOST: rabbitmq
+      SPRING_RABBITMQ_PORT: 5672
+      SPRING_RABBITMQ_USERNAME: ${RABBITMQ_USER:-guest}
+      SPRING_RABBITMQ_PASSWORD: ${RABBITMQ_PASSWORD:-guest}
+      DEVICES_SERVICE_URL: http://device-service:8080
+    networks:
+      - microservices-net
+
+  # --- Monitoring Microservice ---
+  monitoring-service:
+    build: ./MonitoringMicroservice
+    container_name: monitoring-service
+    depends_on:
+      - rabbitmq
+      - postgres-monitoring
+    environment:
+      SPRING_RABBITMQ_HOST: rabbitmq
+      SPRING_RABBITMQ_PORT: 5672
+      SPRING_RABBITMQ_USERNAME: ${RABBITMQ_USER:-guest}
+      SPRING_RABBITMQ_PASSWORD: ${RABBITMQ_PASSWORD:-guest}
+      SPRING_DATASOURCE_URL: jdbc:postgresql://postgres-monitoring:5432/monitoring_db
+      SPRING_DATASOURCE_USERNAME: ${POSTGRES_USER:-postgres}
+      SPRING_DATASOURCE_PASSWORD: ${POSTGRES_PASSWORD:-postgres}
+      SERVER_PORT: 8080
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.monitoring.rule=PathPrefix(`/api/monitoring`)"
+      - "traefik.http.services.monitoring.loadbalancer.server.port=8080"
+      - "traefik.http.routers.monitoring.entrypoints=web"
+      - "traefik.http.routers.monitoring.priority=10"
+      - "traefik.http.routers.monitoring.middlewares=auth@docker"
+    networks:
+      - microservices-net
+
+  # --- Frontend (React app served by Nginx) ---
+  frontend:
+    build: ./Frontend/frontend
+    container_name: frontend
+    depends_on:
+      - auth-service
+      - device-service
+      - user-service
+      - monitoring-service
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.frontend.rule=PathPrefix(`/`)"
+      - "traefik.http.routers.frontend.entrypoints=web"
+      # Lowest priority so that backend prefixes like /users, /devices, /auth win
+      - "traefik.http.routers.frontend.priority=1"
+      - "traefik.http.services.frontend.loadbalancer.server.port=80"
+    networks:
+      - microservices-net
+
+  # --- Websocket Microservice ---
+  websocket-microservice:
+    build: ./WebsocketMicroservice
+    container_name: websocket-microservice
+    depends_on:
+      - rabbitmq
+    environment:
+      SERVER_PORT: 8084
+      SPRING_RABBITMQ_HOST: rabbitmq
+      SPRING_RABBITMQ_PORT: 5672
+      SPRING_RABBITMQ_USERNAME: ${RABBITMQ_USER:-guest}
+      SPRING_RABBITMQ_PASSWORD: ${RABBITMQ_PASSWORD:-guest}
+      # Optional local LLM for the support chatbot (falls back to a static reply if unreachable)
+      OLLAMA_API_URL: ${OLLAMA_API_URL:-http://host.docker.internal:11434/api/generate}
+      OLLAMA_MODEL: ${OLLAMA_MODEL:-qwen3:8b}
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    ports:
+      - "8084:8084"
+    networks:
+      - microservices-net
+
+networks:
+  microservices-net:
+    driver: bridge

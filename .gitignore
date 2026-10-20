@@ -1,0 +1,67 @@
+# --- OS files ---
+.DS_Store
+Thumbs.db
+
+# --- IDEs / Editors ---
+.idea/
+.vscode/
+*.iml
+.classpath
+.project
+.settings/
+
+# --- Logs ---
+logs/
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# --- Env / Secrets ---
+.env
+.env.local
+.env.*.local
+**/.env
+**/.env.local
+**/.env.*.local
+!.env.example
+
+# --- Maven / Java ---
+# Build output
+**/target/
+# Classes & packaged artifacts
+*.class
+*.jar
+*.war
+*.ear
+# Keep the Maven wrapper JAR (required by mvnw)
+!.mvn/wrapper/maven-wrapper.jar
+# Other temporary files
+.mvn/timing.properties
+
+# --- Node / React ---
+# Dependencies
+**/node_modules/
+# Build output
+**/build/
+**/dist/
+# Coverage
+**/coverage/
+# Cache
+.npm/
+.pnpm-store/
+.yarn/
+.yarn-cache/
+.parcel-cache/
+.eslintcache
+
+# --- Misc ---
+# Spring Initializr boilerplate
+HELP.md
+*.swp
+*.swo
+*.tmp
+*.temp
+~$*
+
+
